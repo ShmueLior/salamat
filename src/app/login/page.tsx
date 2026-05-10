@@ -25,46 +25,54 @@ export default function LoginPage() {
 
     const supabase = createClient();
 
-    if (mode === 'register') {
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: { display_name: name, phone },
-        },
-      });
-
-      if (signUpError) {
-        setError(signUpError.message);
-        setLoading(false);
-        return;
-      }
-
-      if (data.user) {
-        // Create profile row
-        await supabase.from('profiles').upsert({
-          id: data.user.id,
-          display_name: name,
-          phone,
+    try {
+      if (mode === 'register') {
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { display_name: name, phone },
+          },
         });
+
+        if (signUpError) {
+          setError(signUpError.message);
+          setLoading(false);
+          return;
+        }
+
+        if (data.user && data.session) {
+          await supabase.from('profiles').upsert({
+            id: data.user.id,
+            display_name: name,
+            phone,
+          });
+          router.push('/onboarding');
+          router.refresh();
+        } else {
+          setError('נשלח אימייל אישור. אנא אשר את כתובת האימייל שלך ואז התחבר.');
+          setLoading(false);
+        }
+      } else {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (signInError) {
+          setError(signInError.message === 'Email not confirmed'
+            ? 'יש לאשר את כתובת האימייל לפני ההתחברות'
+            : 'אימייל או סיסמה שגויים');
+          setLoading(false);
+          return;
+        }
+
+        router.push('/');
+        router.refresh();
       }
-
-      router.push('/onboarding');
-      router.refresh();
-    } else {
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (signInError) {
-        setError('אימייל או סיסמה שגויים');
-        setLoading(false);
-        return;
-      }
-
-      router.push('/');
-      router.refresh();
+    } catch (err) {
+      setError('שגיאת חיבור. נסה שוב.');
+      setLoading(false);
     }
   };
 
