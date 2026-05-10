@@ -132,7 +132,7 @@ export default function LoginPage() {
             ))}
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} noValidate className="space-y-4">
             {/* Name field (register only) */}
             {mode === 'register' && (
               <div className="animate-fade-up">
