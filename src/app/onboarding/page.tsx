@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Hash, ArrowRight, Copy, CheckCheck, Loader2 } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 
 type Step = 'choose' | 'create' | 'join' | 'invite';
 
@@ -23,6 +24,10 @@ const DARK = {
 
 const EMOJIS = ['🛒', '🏠', '🍎', '🧹', '💊', '🐾', '👶', '🎉'];
 
+function generateInviteCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('choose');
@@ -30,17 +35,46 @@ export default function OnboardingPage() {
   const [selectedEmoji, setSelectedEmoji] = useState('🛒');
   const [joinCode, setJoinCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  const [inviteCode] = useState(() => Math.random().toString(36).slice(2, 8).toUpperCase());
+  const [createdInviteCode, setCreatedInviteCode] = useState('');
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!listName.trim()) return;
     setLoading(true);
-    await new Promise(r => setTimeout(r, 900));
-    // Set household cookie so middleware lets user into the app
-    const newId = crypto.randomUUID();
-    document.cookie = `household_id=${newId}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax`;
+    setError('');
+
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
+
+    const inviteCode = generateInviteCode();
+
+    const { data: household, error: householdError } = await supabase
+      .from('households')
+      .insert({ name: `${selectedEmoji} ${listName}`, invite_code: inviteCode })
+      .select()
+      .single();
+
+    if (householdError || !household) {
+      setError('שגיאה ביצירת הרשימה. נסה שוב.');
+      setLoading(false);
+      return;
+    }
+
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ household_id: household.id })
+      .eq('id', user.id);
+
+    if (profileError) {
+      setError('שגיאה בעדכון הפרופיל. נסה שוב.');
+      setLoading(false);
+      return;
+    }
+
+    setCreatedInviteCode(inviteCode);
     setLoading(false);
     setStep('invite');
   };
@@ -49,16 +83,41 @@ export default function OnboardingPage() {
     e.preventDefault();
     if (joinCode.trim().length < 6) return;
     setLoading(true);
-    await new Promise(r => setTimeout(r, 900));
-    // Set household cookie for the joined list
-    document.cookie = `household_id=${joinCode.trim()}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax`;
-    setLoading(false);
+    setError('');
+
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
+
+    const { data: household, error: lookupError } = await supabase
+      .from('households')
+      .select('id, name')
+      .eq('invite_code', joinCode.trim())
+      .single();
+
+    if (lookupError || !household) {
+      setError('קוד הזמנה לא נמצא. בדוק שוב.');
+      setLoading(false);
+      return;
+    }
+
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ household_id: household.id })
+      .eq('id', user.id);
+
+    if (profileError) {
+      setError('שגיאה בהצטרפות. נסה שוב.');
+      setLoading(false);
+      return;
+    }
+
     router.push('/');
     router.refresh();
   };
 
   const copyCode = async () => {
-    await navigator.clipboard.writeText(inviteCode);
+    await navigator.clipboard.writeText(createdInviteCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -68,7 +127,7 @@ export default function OnboardingPage() {
     else setStep('choose');
   };
 
-  const stepLabel = step === 'choose' ? '1 / 2' : step === 'invite' ? '2 / 2' : '1 / 2';
+  const stepLabel = step === 'invite' ? '2 / 2' : '1 / 2';
 
   return (
     <div
@@ -79,7 +138,6 @@ export default function OnboardingPage() {
         display: 'flex', flexDirection: 'column',
       }}
     >
-      {/* Ambient glow */}
       <div aria-hidden style={{
         position: 'fixed', top: '-6rem', right: '-6rem',
         width: '22rem', height: '22rem', borderRadius: '50%',
@@ -106,9 +164,7 @@ export default function OnboardingPage() {
           >
             <ArrowRight size={20} />
           </button>
-          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: DARK.textDim }}>
-            {stepLabel}
-          </span>
+          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: DARK.textDim }}>{stepLabel}</span>
         </div>
 
         <div className="animate-fade-up">
@@ -196,6 +252,8 @@ export default function OnboardingPage() {
               </div>
             </DarkField>
 
+            {error && <p style={{ color: '#f87171', fontSize: '0.875rem', textAlign: 'center' }}>{error}</p>}
+
             <button
               type="submit"
               disabled={loading || !listName.trim()}
@@ -232,7 +290,7 @@ export default function OnboardingPage() {
                   color: DARK.text, borderRadius: '0.875rem', padding: '1rem',
                   fontSize: '2rem', fontWeight: 900, letterSpacing: '0.3em',
                   outline: 'none', textAlign: 'center', boxSizing: 'border-box',
-                  fontFamily: "'Heebo', monospace",
+                  fontFamily: 'monospace',
                 }}
                 onFocus={e => (e.target.style.borderColor = DARK.accent)}
                 onBlur={e => (e.target.style.borderColor = DARK.border)}
@@ -241,6 +299,8 @@ export default function OnboardingPage() {
                 הקוד מופיע בהגדרות הרשימה של השותף שלך
               </p>
             </DarkField>
+
+            {error && <p style={{ color: '#f87171', fontSize: '0.875rem', textAlign: 'center' }}>{error}</p>}
 
             <button
               type="submit"
@@ -263,7 +323,6 @@ export default function OnboardingPage() {
         {/* INVITE */}
         {step === 'invite' && (
           <div className="animate-fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {/* Success */}
             <div style={{
               background: DARK.accentDim, border: `1px solid ${DARK.accentBorder}`,
               borderRadius: '1.25rem', padding: '1.5rem', textAlign: 'center',
@@ -272,12 +331,9 @@ export default function OnboardingPage() {
               <p style={{ fontWeight: 900, fontSize: '1.1rem', color: DARK.text, marginBottom: '0.25rem' }}>
                 הרשימה נוצרה בהצלחה!
               </p>
-              <p style={{ fontSize: '0.875rem', color: DARK.accent }}>
-                &ldquo;{listName}&rdquo;
-              </p>
+              <p style={{ fontSize: '0.875rem', color: DARK.accent }}>&ldquo;{listName}&rdquo;</p>
             </div>
 
-            {/* Invite code */}
             <div style={{
               background: DARK.card, border: `1px solid ${DARK.border}`,
               borderRadius: '1.25rem', padding: '1.25rem',
@@ -291,9 +347,8 @@ export default function OnboardingPage() {
               }}>
                 <p style={{ fontSize: '0.72rem', color: DARK.textSub, marginBottom: '0.375rem' }}>קוד הזמנה</p>
                 <p style={{ fontSize: '2.25rem', fontWeight: 900, letterSpacing: '0.25em', color: DARK.accent, fontFamily: 'monospace' }}>
-                  {inviteCode}
+                  {createdInviteCode}
                 </p>
-                <p style={{ fontSize: '0.72rem', color: DARK.textDim, marginTop: '0.375rem' }}>בתוקף ל-7 ימים</p>
               </div>
               <button
                 onClick={copyCode}
@@ -331,13 +386,8 @@ export default function OnboardingPage() {
 }
 
 function ChoiceCard({ icon, iconBg, iconBorder, title, desc, onClick, dark }: {
-  icon: React.ReactNode;
-  iconBg: string;
-  iconBorder: string;
-  title: string;
-  desc: string;
-  onClick: () => void;
-  dark: typeof DARK;
+  icon: React.ReactNode; iconBg: string; iconBorder: string;
+  title: string; desc: string; onClick: () => void; dark: typeof DARK;
 }) {
   return (
     <button
@@ -346,8 +396,7 @@ function ChoiceCard({ icon, iconBg, iconBorder, title, desc, onClick, dark }: {
         display: 'flex', alignItems: 'center', gap: '1rem', padding: '1.125rem',
         borderRadius: '1.25rem', background: dark.card, border: `1px solid ${dark.border}`,
         cursor: 'pointer', textAlign: 'right', width: '100%',
-        transition: 'border-color 0.2s',
-        fontFamily: "'Heebo', sans-serif",
+        transition: 'border-color 0.2s', fontFamily: "'Heebo', sans-serif",
       }}
       onMouseOver={e => (e.currentTarget.style.borderColor = dark.accentBorder)}
       onMouseOut={e => (e.currentTarget.style.borderColor = dark.border)}
@@ -374,9 +423,7 @@ function DarkField({ label, children, dark }: { label: string; children: React.R
       background: dark.card, border: `1px solid ${dark.border}`,
       borderRadius: '1.25rem', padding: '1rem',
     }}>
-      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: dark.textSub, marginBottom: '0.625rem' }}>
-        {label}
-      </p>
+      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: dark.textSub, marginBottom: '0.625rem' }}>{label}</p>
       {children}
     </div>
   );

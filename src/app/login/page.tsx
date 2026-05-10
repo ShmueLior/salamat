@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 
 type Mode = 'login' | 'register';
 
@@ -21,22 +22,50 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 1200));
 
-    // Set auth cookie (Supabase session token replaces this value later)
-    const fakeToken = crypto.randomUUID();
-    document.cookie = `auth_token=${fakeToken}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax`;
+    const supabase = createClient();
 
-    // For login simulation: assume existing users already have a household.
-    // Register always goes to onboarding. Login skips onboarding.
-    if (mode === 'login') {
-      // Simulate existing household for returning users
-      document.cookie = `household_id=demo-household; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax`;
+    if (mode === 'register') {
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { display_name: name, phone },
+        },
+      });
+
+      if (signUpError) {
+        setError(signUpError.message);
+        setLoading(false);
+        return;
+      }
+
+      if (data.user) {
+        // Create profile row
+        await supabase.from('profiles').upsert({
+          id: data.user.id,
+          display_name: name,
+          phone,
+        });
+      }
+
+      router.push('/onboarding');
+      router.refresh();
+    } else {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (signInError) {
+        setError('אימייל או סיסמה שגויים');
+        setLoading(false);
+        return;
+      }
+
+      router.push('/');
+      router.refresh();
     }
-
-    setLoading(false);
-    router.push(mode === 'register' ? '/onboarding' : '/');
-    router.refresh();
   };
 
   return (
@@ -167,6 +196,7 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="לפחות 8 תווים"
                   className="input-dark w-full rounded-2xl px-4 py-3.5 text-base pl-12"
+                  minLength={8}
                   required
                 />
                 <button
